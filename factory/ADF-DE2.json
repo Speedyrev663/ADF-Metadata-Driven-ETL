@@ -1,0 +1,15 @@
+{
+	"name": "ADF-DE2",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "southindia",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "38346a31-bd6f-47da-93bd-8ba1251f13a1",
+		"tenantId": "e23b9e48-a2d9-4f86-8eae-3401edfc7665"
+	}
+}

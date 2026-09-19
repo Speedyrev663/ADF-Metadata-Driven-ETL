@@ -1,0 +1,580 @@
+{
+	"name": "pipeline2",
+	"properties": {
+		"activities": [
+			{
+				"name": "Lookup1",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": "select * \nfrom\ndbo.Config_table\nwhere isactive = 1 ",
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "Look_up",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "ForEach1",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "Lookup1",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('Lookup1').output.value",
+						"type": "Expression"
+					},
+					"batchCount": 2,
+					"activities": [
+						{
+							"name": "If Condition1",
+							"type": "IfCondition",
+							"dependsOn": [],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@equals(item().loadtype,'FULL')",
+									"type": "Expression"
+								},
+								"ifFalseActivities": [
+									{
+										"name": "Copy data2",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "AzureSqlSource",
+												"sqlReaderQuery": {
+													"value": "@concat(\n    'SELECT * FROM [', item().SourceSchema, '].[', item().SourceTable, ']',\n    ' WHERE [', item().WatermarkColumn, '] > ''',\n    formatDateTime(string(coalesce(item().WatermarkValue, '1900-01-01')), 'yyyy-MM-dd HH:mm:ss'),\n    ''''\n)",
+													"type": "Expression"
+												},
+												"queryTimeout": "02:00:00",
+												"partitionOption": "None"
+											},
+											"sink": {
+												"type": "AzureSqlSink",
+												"writeBehavior": "upsert",
+												"upsertSettings": {
+													"useTempDB": true,
+													"keys": {
+														"value": "@createArray(item().DeltakeyColumn)",
+														"type": "Expression"
+													}
+												},
+												"sqlWriterUseTableLock": false,
+												"disableMetricsCollection": false
+											},
+											"enableStaging": false,
+											"translator": {
+												"type": "TabularTranslator",
+												"typeConversion": true,
+												"typeConversionSettings": {
+													"allowDataTruncation": true,
+													"treatBooleanAsNumber": false
+												}
+											}
+										},
+										"inputs": [
+											{
+												"referenceName": "Dynamic_source",
+												"type": "DatasetReference",
+												"parameters": {
+													"Sourceschema": "dbo",
+													"Sourcetable": "Table"
+												}
+											}
+										],
+										"outputs": [
+											{
+												"referenceName": "Dynamic_sink",
+												"type": "DatasetReference",
+												"parameters": {
+													"sinkschema": {
+														"value": "@{item().TargetSchema}",
+														"type": "Expression"
+													},
+													"sinktable": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													}
+												}
+											}
+										]
+									},
+									{
+										"name": "Script1",
+										"type": "Script",
+										"dependsOn": [
+											{
+												"activity": "Copy data2",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "AzureSqlDatabase1",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "@concat('update dbo.Config_Table\nset Watermarkvalue = (\n    select max(',\n    item().WatermarkColumn, ')\n    From ',\n    item().SourceTable,\n    '\n)\nwhere SourceTable = ''',\nitem().SourceTable,\n''''\n)",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									},
+									{
+										"name": "Stored procedure3",
+										"type": "SqlServerStoredProcedure",
+										"dependsOn": [
+											{
+												"activity": "Copy data2",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"storedProcedureName": "[dbo].[usp_InsertPipelineLogSuccess]",
+											"storedProcedureParameters": {
+												"EndTime": {
+													"value": {
+														"value": "@utcNow()",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"LoadType": {
+													"value": {
+														"value": "@{item().LoadType}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"PipelineName": {
+													"value": "test",
+													"type": "String"
+												},
+												"PipelineRunID": {
+													"value": {
+														"value": "@pipeline().RunId",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"RowsCopied": {
+													"value": {
+														"value": "@activity('Copy data2').output.rowsCopied",
+														"type": "Expression"
+													},
+													"type": "Int32"
+												},
+												"SourceTable": {
+													"value": {
+														"value": "@{item().SourceTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"StartTime": {
+													"value": {
+														"value": "@activity('Copy data2').output.executionDetails[0].start",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"TargetTable": {
+													"value": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												}
+											}
+										},
+										"linkedServiceName": {
+											"referenceName": "AzureSqlsink",
+											"type": "LinkedServiceReference"
+										}
+									},
+									{
+										"name": "Stored procedure4",
+										"type": "SqlServerStoredProcedure",
+										"dependsOn": [
+											{
+												"activity": "Copy data2",
+												"dependencyConditions": [
+													"Failed"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"storedProcedureName": "[dbo].[usp_InsertPipelineLogError]",
+											"storedProcedureParameters": {
+												"EndTime": {
+													"value": {
+														"value": "@utcNow()",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"ErrorMessage": {
+													"value": {
+														"value": "@activity('Copy data2').output.errors[0].Message",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"LoadType": {
+													"value": {
+														"value": "@{item().LoadType}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"PipelineName": {
+													"value": "test",
+													"type": "String"
+												},
+												"PipelineRunID": {
+													"value": {
+														"value": "@pipeline().RunId",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"SourceTable": {
+													"value": {
+														"value": "@{item().SourceTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"StartTime": {
+													"value": {
+														"value": "@activity('Copy data2').output.executionDetails[0].start",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"TargetTable": {
+													"value": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												}
+											}
+										},
+										"linkedServiceName": {
+											"referenceName": "AzureSqlsink",
+											"type": "LinkedServiceReference"
+										}
+									}
+								],
+								"ifTrueActivities": [
+									{
+										"name": "Copy data1",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "AzureSqlSource",
+												"queryTimeout": "02:00:00",
+												"partitionOption": "None"
+											},
+											"sink": {
+												"type": "AzureSqlSink",
+												"preCopyScript": {
+													"value": "@concat('Truncate Table ',item().TargetSchema, '.', item().TargetTable)",
+													"type": "Expression"
+												},
+												"writeBehavior": "insert",
+												"sqlWriterUseTableLock": false
+											},
+											"enableStaging": false,
+											"translator": {
+												"type": "TabularTranslator",
+												"typeConversion": true,
+												"typeConversionSettings": {
+													"allowDataTruncation": true,
+													"treatBooleanAsNumber": false
+												}
+											}
+										},
+										"inputs": [
+											{
+												"referenceName": "Dynamic_source",
+												"type": "DatasetReference",
+												"parameters": {
+													"Sourceschema": {
+														"value": "@{item().SourceSchema}",
+														"type": "Expression"
+													},
+													"Sourcetable": {
+														"value": "@{item().SourceTable}",
+														"type": "Expression"
+													}
+												}
+											}
+										],
+										"outputs": [
+											{
+												"referenceName": "Dynamic_sink",
+												"type": "DatasetReference",
+												"parameters": {
+													"sinkschema": {
+														"value": "@{item().TargetSchema}",
+														"type": "Expression"
+													},
+													"sinktable": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													}
+												}
+											}
+										]
+									},
+									{
+										"name": "Stored procedure1",
+										"type": "SqlServerStoredProcedure",
+										"dependsOn": [
+											{
+												"activity": "Copy data1",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"storedProcedureName": "[dbo].[usp_InsertPipelineLogSuccess]",
+											"storedProcedureParameters": {
+												"EndTime": {
+													"value": {
+														"value": "@utcNow()",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"LoadType": {
+													"value": {
+														"value": "@{item().LoadType}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"PipelineName": {
+													"value": "Test",
+													"type": "String"
+												},
+												"PipelineRunID": {
+													"value": {
+														"value": "@pipeline().RunId",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"RowsCopied": {
+													"value": {
+														"value": "@activity('Copy data1').output.rowsCopied",
+														"type": "Expression"
+													},
+													"type": "Int32"
+												},
+												"SourceTable": {
+													"value": {
+														"value": "@{item().SourceTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"StartTime": {
+													"value": {
+														"value": "@activity('Copy data1').output.executionDetails[0].start",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"TargetTable": {
+													"value": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												}
+											}
+										},
+										"linkedServiceName": {
+											"referenceName": "AzureSqlsink",
+											"type": "LinkedServiceReference"
+										}
+									},
+									{
+										"name": "Stored procedure2",
+										"type": "SqlServerStoredProcedure",
+										"dependsOn": [
+											{
+												"activity": "Copy data1",
+												"dependencyConditions": [
+													"Failed"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"storedProcedureName": "[dbo].[usp_InsertPipelineLogError]",
+											"storedProcedureParameters": {
+												"EndTime": {
+													"value": {
+														"value": "@utcNow()",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"ErrorMessage": {
+													"value": {
+														"value": "@activity('Copy data1').output.errors[0].Message",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"LoadType": {
+													"value": {
+														"value": "@{item().LoadType}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"PipelineName": {
+													"value": "test",
+													"type": "String"
+												},
+												"PipelineRunID": {
+													"value": {
+														"value": "@pipeline().RunId",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"SourceTable": {
+													"value": {
+														"value": "@{item().SourceTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												},
+												"StartTime": {
+													"value": {
+														"value": "@activity('Copy data1').output.executionDetails[0].start",
+														"type": "Expression"
+													},
+													"type": "DateTime"
+												},
+												"TargetTable": {
+													"value": {
+														"value": "@{item().TargetTable}",
+														"type": "Expression"
+													},
+													"type": "String"
+												}
+											}
+										},
+										"linkedServiceName": {
+											"referenceName": "AzureSqlsink",
+											"type": "LinkedServiceReference"
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			}
+		],
+		"annotations": [],
+		"lastPublishTime": "2026-09-18T13:18:45Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}
